@@ -16,7 +16,7 @@ from dataclasses import dataclass
 class ForecastConfig:
     """Configuration for a forecaster"""
     quantiles: np.ndarray
-    horizon: int = 2  # forecast steps
+    horizon: int = 3  # forecast steps (h=1, h=2, h=3 for L=3 lead time)
     transform_name: str = 'identity'
     random_state: int = 42
 
@@ -25,7 +25,8 @@ class BaseForecaster(ABC):
     """
     Abstract base class for all density forecasters.
     
-    All models must generate quantile forecasts for h=1 and h=2 weeks ahead.
+    All models must generate quantile forecasts for h=1, h=2, and h=3 weeks ahead
+    to support L=3 lead time (order at end of week t arrives start of week t+3).
     """
     
     def __init__(self, config: ForecastConfig, name: str = "BaseForecaster"):
@@ -54,14 +55,14 @@ class BaseForecaster(ABC):
     @abstractmethod
     def predict_quantiles(
         self, 
-        steps: int = 2, 
+        steps: int = 3, 
         X_future: Optional[pd.DataFrame] = None
     ) -> pd.DataFrame:
         """
         Generate quantile forecasts for h=1..steps ahead.
         
         Args:
-            steps: Number of steps ahead to forecast
+            steps: Number of steps ahead to forecast (default 3 for L=3 lead time)
             X_future: Optional future exogenous features
             
         Returns:
@@ -74,7 +75,7 @@ class BaseForecaster(ABC):
     
     def simulate_paths(
         self, 
-        steps: int = 2, 
+        steps: int = 3, 
         n_sims: int = 1000,
         seed: Optional[int] = None
     ) -> np.ndarray:

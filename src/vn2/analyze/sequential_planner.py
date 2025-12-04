@@ -259,6 +259,140 @@ def choose_order_L2(
     return int(best_q), float(best_cost)
 
 
+def choose_order_L3(
+    h1_pmf: np.ndarray,
+    h2_pmf: np.ndarray,
+    h3_pmf: np.ndarray,
+    I0: int,
+    Q1: int,
+    Q2: int,
+    Q3: int,
+    costs: Costs,
+    micro_refine: bool = True
+) -> Tuple[int, float]:
+    """
+    Choose optimal order quantity for L=3 lead time using newsvendor fractile.
+    
+    LEAD TIME SEMANTICS: Order placed at END of week t arrives at START of week t+3.
+    (Competition rule: "orders are made at the end of week X and received at the start of week X+3")
+    
+    At decision epoch (end of week t):
+    - I0 = on-hand inventory at end of week t (after week t's demand was served)
+    - Q1 = order arriving start of week t+1 (placed end of t-2)
+    - Q2 = order arriving start of week t+2 (placed end of t-1)
+    - Q3 = order arriving start of week t+3 (placed end of t - this is our previous week's order)
+    - h1_pmf = demand PMF for week t+1
+    - h2_pmf = demand PMF for week t+2
+    - h3_pmf = demand PMF for week t+3
+    - q = order to place now at end of t (arrives start of week t+3)
+    
+    Steps:
+    1) Compute inventory distribution at start of week t+1: S1 = I0 + Q1
+    2) Compute leftover after week t+1: L1 = max(S1 - D_{t+1}, 0)
+    3) Compute inventory at start of week t+2: S2 = L1 + Q2
+    4) Compute leftover after week t+2: L2 = max(S2 - D_{t+2}, 0)
+    5) Compute inventory at start of week t+3: S3 = L2 + Q3 + q (our order arrives!)
+    6) Choose q to minimize expected cost at week t+3: cu*shortage + co*overage
+       where shortage = max(D_{t+3} - S3, 0)
+             overage = max(S3 - D_{t+3}, 0)
+    7) Use newsvendor fractile p* = cu/(cu+co) on W = D_{t+3} - (L2 + Q3)
+    
+    Args:
+        h1_pmf: Demand PMF for week t+1
+        h2_pmf: Demand PMF for week t+2
+        h3_pmf: Demand PMF for week t+3
+        I0: On-hand inventory at end of week t
+        Q1: Order arriving start of week t+1 (placed end of t-2)
+        Q2: Order arriving start of week t+2 (placed end of t-1)
+        Q3: Order arriving start of week t+3 (placed end of t - previous order)
+        costs: Cost parameters (holding=co, shortage=cu)
+        micro_refine: If True, check q±{1,2} around fractile solution
+    
+    Returns:
+        (q_star, cost_star): Optimal order quantity and expected cost at week t+3
+    """
+    h1 = _safe_pmf(h1_pmf)
+    h2 = _safe_pmf(h2_pmf)
+    h3 = _safe_pmf(h3_pmf)
+    cu = costs.shortage
+    co = costs.holding
+    
+    # Step 1 & 2: L1 = leftover after week t+1
+    S1 = int(I0) + int(Q1)
+    L1 = leftover_from_stock_and_demand(S1, h1)
+    
+    # Step 3 & 4: L2 = leftover after week t+2
+    # Add Q2 to L1, then subtract D2
+    L1_plus_Q2 = _shift_right(L1, int(Q2))
+    # Compute L2 distribution via convolution
+    # L2 = max(L1_plus_Q2 - D2, 0)
+    L2 = _convolve_leftover(L1_plus_Q2, h2)
+    
+    # Step 5: Lpre = L2 + Q3 (inventory before our order q arrives)
+    Lpre = _shift_right(L2, int(Q3))
+    
+    # Step 6: Compute newsvendor fractile
+    W, w_min = diff_pmf_D_minus_L(h3, Lpre)
+    p_star = cu / (cu + co)
+    q0 = max(0, pmf_quantile(W, w_min, p_star))
+    
+    # Step 7: Micro-refinement (evaluate q0 and neighbors)
+    D_rev = h3[::-1]
+    
+    def eval_q(q):
+        Z = _conv_fft(_shift_right(Lpre, q), D_rev)  # Z = (Lpre + q) - D3
+        z_min = -(len(D_rev) - 1)
+        E_over, E_under = expected_pos_neg_from_Z(Z, z_min)
+        return co * E_over + cu * E_under
+    
+    if micro_refine:
+        candidates = [q0, max(0, q0 - 1), q0 + 1, max(0, q0 - 2), q0 + 2]
+        best_q, best_cost = min(
+            ((q, eval_q(q)) for q in candidates),
+            key=lambda x: x[1]
+        )
+    else:
+        best_q = q0
+        best_cost = eval_q(q0)
+    
+    return int(best_q), float(best_cost)
+
+
+def _convolve_leftover(S_pmf: np.ndarray, D_pmf: np.ndarray) -> np.ndarray:
+    """
+    Compute PMF of max(S - D, 0) where S and D are random variables.
+    
+    Used to propagate inventory through a demand period when starting
+    inventory is itself uncertain (a distribution).
+    
+    Args:
+        S_pmf: PMF of starting stock with support {0, 1, ..., len(S_pmf)-1}
+        D_pmf: PMF of demand with support {0, 1, ..., len(D_pmf)-1}
+    
+    Returns:
+        PMF of L = max(S - D, 0) with support {0, 1, ..., max(S)}
+    """
+    S = _safe_pmf(S_pmf)
+    D = _safe_pmf(D_pmf)
+    
+    max_s = len(S) - 1
+    max_d = len(D) - 1
+    
+    # Output PMF for L = max(S - D, 0)
+    out = np.zeros(max_s + 1)
+    
+    for s in range(len(S)):
+        for d in range(len(D)):
+            prob = S[s] * D[d]
+            leftover = max(0, s - d)
+            out[leftover] += prob
+    
+    s = out.sum()
+    if s > 0:
+        out /= s
+    return out
+
+
 # ==================== Sequential Runner ====================
 
 @dataclass
