@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Reusable backtesting harness for sequential inventory strategies (lead time L=2).
+Reusable backtesting harness for sequential inventory strategies (lead time L=3).
 
 Features
 --------
 * YAML-based run specification (configurable weeks, strategy controls, data paths)
 * Sequential simulation that respects temporal constraints (orders at week t use fold_{t-1})
+* L=3 lead time: orders placed end of week t arrive start of week t+3
 * Guardrail + selector overrides aligned with diagnostics pipeline
 * Detailed logging + audit trail under reports/backtests/<run_id>
 * Outputs per-SKU metrics, weekly summaries, and markdown run report
+* Hypothesis test metrics (Jensen delta, stockout classification, etc.)
 
 Example
 -------
@@ -31,7 +33,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from vn2.analyze.sequential_planner import Costs, choose_order_L2
+from vn2.analyze.sequential_planner import Costs, choose_order_L3
 from vn2.analyze.sequential_backtest import quantiles_to_pmf
 
 QUANTILE_LEVELS = np.array([0.01, 0.05, 0.10, 0.20, 0.30, 0.40,
@@ -246,20 +248,29 @@ class BacktestHarness:
         return lookup
 
     def _load_initial_state(self) -> pd.DataFrame:
-        """Load initial inventory (end of week 0)."""
+        """Load initial inventory (end of week 0).
+        
+        For L=3 lead time, we track 3 in-transit columns:
+        - intransit_1: arrives start of week 1 (placed end of week -2)
+        - intransit_2: arrives start of week 2 (placed end of week -1)
+        - intransit_3: arrives start of week 3 (placed end of week 0 - our first order)
+        """
         df = load_csv(self.paths["initial_state"])
         store_series = get_column(df, "Store").astype(int)
         product_series = get_column(df, "Product").astype(int)
         end_inventory = get_column(df, "End Inventory").fillna(0).astype(float)
         intransit1 = get_column(df, "In Transit W+1").fillna(0).astype(float)
         intransit2 = get_column(df, "In Transit W+2").fillna(0).astype(float)
+        # Initial state doesn't have intransit_3 - that's our first order
+        intransit3 = pd.Series(0.0, index=range(len(store_series)))
 
         df_sorted = pd.DataFrame({
             "store": store_series,
             "product": product_series,
             "end_inventory": end_inventory,
             "intransit_1": intransit1,
-            "intransit_2": intransit2
+            "intransit_2": intransit2,
+            "intransit_3": intransit3
         }).sort_values(["store", "product"])
 
         idx = pd.MultiIndex.from_arrays(
@@ -270,6 +281,7 @@ class BacktestHarness:
             "on_hand": df_sorted["end_inventory"].values,
             "intransit_1": df_sorted["intransit_1"].values,
             "intransit_2": df_sorted["intransit_2"].values,
+            "intransit_3": df_sorted["intransit_3"].values,
         }, index=idx)
         return state
 
@@ -364,14 +376,22 @@ class BacktestHarness:
         return max(0.5, min(0.99, base + bias))
 
     # ------------------------------------------------------------------ #
-    # Order generation + simulation
+    # Order generation + simulation (L=3 lead time)
     # ------------------------------------------------------------------ #
     def _generate_orders_for_week(
         self,
         week: int,
         state: pd.DataFrame
     ) -> Tuple[pd.DataFrame, Dict[str, float]]:
-        """Generate orders + expected costs for each SKU."""
+        """Generate orders + expected costs for each SKU using L=3 optimization.
+        
+        L=3 LEAD TIME SEMANTICS:
+        - Order placed at END of week t arrives at START of week t+3
+        - We need h=1, h=2, h=3 forecasts to optimize
+        - Q1 = intransit_1 (arrives week t+1, placed end of t-2)
+        - Q2 = intransit_2 (arrives week t+2, placed end of t-1)
+        - Q3 = intransit_3 (arrives week t+3, placed end of t - previous week's order)
+        """
         selector = self._get_selector_lookup()
         records = []
         fold_idx = max(0, week - 1 + self.fold_offset)
@@ -394,6 +414,7 @@ class BacktestHarness:
                 continue
 
             qdf = self._load_quantiles(model, store, product, fold_idx)
+            # For L=3, we need h=1, h=2, and h=3 forecasts
             if qdf is None or 1 not in qdf.index or 2 not in qdf.index:
                 records.append({
                     "store": store,
@@ -410,8 +431,12 @@ class BacktestHarness:
 
             h1_quantiles = qdf.loc[1].values
             h2_quantiles = qdf.loc[2].values
+            # If h=3 not available, use h=2 as approximation
+            h3_quantiles = qdf.loc[3].values if 3 in qdf.index else h2_quantiles
+            
             h1_pmf = quantiles_to_pmf(h1_quantiles, QUANTILE_LEVELS, self.sip_grain)
             h2_pmf = quantiles_to_pmf(h2_quantiles, QUANTILE_LEVELS, self.sip_grain)
+            h3_pmf = quantiles_to_pmf(h3_quantiles, QUANTILE_LEVELS, self.sip_grain)
 
             service_level = self._service_level_for_sku(store, product)
 
@@ -422,11 +447,13 @@ class BacktestHarness:
             else:
                 costs = self.costs
 
-            order_qty, expected_cost = choose_order_L2(
-                h1_pmf, h2_pmf,
+            # L=3 optimization with 3-week pipeline
+            order_qty, expected_cost = choose_order_L3(
+                h1_pmf, h2_pmf, h3_pmf,
                 int(inv["on_hand"]),
-                int(inv["intransit_1"]),
-                int(inv["intransit_2"]),
+                int(inv["intransit_1"]),  # Q1: arrives week t+1
+                int(inv["intransit_2"]),  # Q2: arrives week t+2
+                int(inv["intransit_3"]),  # Q3: arrives week t+3 (previous order)
                 costs,
                 micro_refine=True
             )
@@ -441,6 +468,7 @@ class BacktestHarness:
                 "forecast_available": True,
                 "h1_quantiles": h1_quantiles,
                 "h2_quantiles": h2_quantiles,
+                "h3_quantiles": h3_quantiles,
                 "cost_holding": costs.holding,
                 "cost_shortage": costs.shortage,
             })
@@ -461,23 +489,33 @@ class BacktestHarness:
         demand: pd.Series,
         orders: pd.Series
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Simulate one week of demand + new orders."""
+        """Simulate one week of demand + new orders with L=3 pipeline.
+        
+        L=3 LEAD TIME:
+        - intransit_1: arrives this week (start of week t)
+        - intransit_2: arrives next week (start of week t+1)  
+        - intransit_3: arrives week after (start of week t+2)
+        - new orders placed now arrive at start of week t+3
+        """
         # Align indices
         idx = state.index.union(demand.index).union(orders.index)
         state = state.reindex(idx, fill_value=0)
         demand = demand.reindex(idx, fill_value=0)
         orders = orders.reindex(idx, fill_value=0)
 
+        # Inventory arriving this week
         received = state["intransit_1"]
         available = state["on_hand"] + received
         sold = np.minimum(available, demand)
         lost = demand - sold
         ending_on_hand = available - sold
 
+        # Shift pipeline forward, add new orders at end
         next_state = pd.DataFrame({
             "on_hand": ending_on_hand,
-            "intransit_1": state["intransit_2"],
-            "intransit_2": orders
+            "intransit_1": state["intransit_2"],  # was arriving week t+1, now arrives week t
+            "intransit_2": state["intransit_3"],  # was arriving week t+2, now arrives week t+1
+            "intransit_3": orders                 # new orders arrive week t+3
         }, index=idx)
 
         holding_cost = ending_on_hand * self.costs.holding

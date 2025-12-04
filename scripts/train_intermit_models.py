@@ -4,14 +4,14 @@ Train TSB and iETS-style intermittent demand models and export quantile checkpoi
 
 The script reads `data/processed/demand_long.parquet` (Store, Product, week, demand),
 trains the requested model for each SKU, and writes quantile forecasts for horizons
-h+1 and h+2 in the standard checkpoint format consumed by the harness.
+h=1, h=2, h=3 in the standard checkpoint format consumed by the L=3 harness.
 
 Usage:
     python scripts/train_intermit_models.py \
         --model tsb \
         --demand-path data/processed/demand_long.parquet \
         --output-root models/checkpoints \
-        --max-folds 6 \
+        --max-folds 12 \
         --max-skus 100
 """
 
@@ -53,13 +53,17 @@ def poisson_quantiles(mean: float) -> np.ndarray:
 
 
 class SimpleIETS:
-    """Lightweight iETS-like forecaster (demand size + interval smoothing)."""
+    """Lightweight iETS-like forecaster (demand size + interval smoothing).
+    
+    For L=3 lead time, generates h=1, h=2, h=3 forecasts.
+    """
 
     def __init__(self, alpha_size: float = 0.1, alpha_interval: float = 0.1):
         self.alpha_size = alpha_size
         self.alpha_interval = alpha_interval
 
-    def forecast(self, series: np.ndarray, horizon: int = 2) -> np.ndarray:
+    def forecast(self, series: np.ndarray, horizon: int = 3) -> np.ndarray:
+        """Generate mean forecasts for each horizon step."""
         size_hat = np.mean(series[series > 0]) if np.any(series > 0) else 0.1
         interval_hat = max(1.0, len(series) / max(1, (series > 0).sum()))
         zeros_since_last = 0.0
@@ -77,7 +81,11 @@ class SimpleIETS:
         return np.full(horizon, mean_demand, dtype=float)
 
 
-def tsb_forecast(series: pd.Series, horizon: int = 2) -> np.ndarray:
+def tsb_forecast(series: pd.Series, horizon: int = 3) -> np.ndarray:
+    """TSB (Teunter-Syntetos-Babai) forecast for intermittent demand.
+    
+    For L=3 lead time, generates h=1, h=2, h=3 forecasts.
+    """
     sf_df = pd.DataFrame({
         "unique_id": "sku",
         "ds": series.index,
@@ -111,17 +119,25 @@ def main():
     parser.add_argument("--model", choices=["tsb", "iets"], required=True)
     parser.add_argument("--demand-path", type=Path, default=Path("data/processed/demand_long.parquet"))
     parser.add_argument("--output-root", type=Path, default=Path("models/checkpoints"))
-    parser.add_argument("--max-folds", type=int, default=6)
+    parser.add_argument("--max-folds", type=int, default=12)
     parser.add_argument("--max-skus", type=int, default=None)
+    parser.add_argument("--horizon", type=int, default=3, help="Forecast horizon (default 3 for L=3)")
     args = parser.parse_args()
 
+    print(f"Training {args.model} models with horizon={args.horizon}")
+    
     demand = load_demand(args.demand_path)
     unique_ids = demand["unique_id"].unique()
     if args.max_skus:
         unique_ids = unique_ids[:args.max_skus]
+    
+    print(f"Processing {len(unique_ids)} SKUs, {args.max_folds} folds each")
 
     weeks = sorted(demand["week"].unique())
     model_dir = args.output_root / args.model
+    
+    n_success = 0
+    n_failed = 0
 
     for uid in unique_ids:
         store, product = map(int, uid.split("_"))
@@ -132,15 +148,24 @@ def main():
             train_mask = series["week"] <= cutoff
             train_series = series.loc[train_mask, ["week", "demand"]].set_index("week")["demand"]
             if len(train_series) < 2:
+                n_failed += 1
                 continue
 
-            if args.model == "tsb":
-                forecasts = tsb_forecast(train_series, horizon=2)
-            else:
-                forecasts = SimpleIETS().forecast(train_series.values.astype(float), horizon=2)
+            try:
+                if args.model == "tsb":
+                    forecasts = tsb_forecast(train_series, horizon=args.horizon)
+                else:
+                    forecasts = SimpleIETS().forecast(train_series.values.astype(float), horizon=args.horizon)
 
-            quantiles = generate_quantiles(forecasts)
-            save_checkpoint(model_dir, store, product, fold_idx, quantiles)
+                quantiles = generate_quantiles(forecasts)
+                save_checkpoint(model_dir, store, product, fold_idx, quantiles)
+                n_success += 1
+            except Exception as e:
+                n_failed += 1
+                continue
+    
+    print(f"Done: {n_success} checkpoints saved, {n_failed} failed")
+    print(f"Output: {model_dir}")
 
 
 if __name__ == "__main__":

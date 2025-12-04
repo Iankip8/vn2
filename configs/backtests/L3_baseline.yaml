@@ -1,0 +1,51 @@
+run_id: L3_baseline_w1_w6
+description: >
+  L=3 lead time baseline backtest for Weeks 1-6 using corrected 3-week lead time
+  optimization with h=3 forecasts. Orders placed end of week t arrive start of week t+3.
+created_at: "2025-12-04T00:00:00Z"
+weeks: [1, 2, 3, 4, 5, 6]
+
+paths:
+  initial_state: "data/raw/Week 0 - 2024-04-08 - Initial State.csv"
+  state_dir: data/states
+  # Use h=3 checkpoints for L=3 optimization
+  checkpoints_dir: models/checkpoints_h3
+  selector_map: models/results/selector_map_seq12_v1.parquet
+  # No overrides for baseline - test pure L=3 effect
+  # selector_overrides: reports/selector_overrides_w6.csv
+  # guardrail_overrides: reports/guardrail_overrides_w6.csv
+  output_root: reports/backtests
+
+week_data:
+  - week: 1
+    state: data/states/state1.csv
+  - week: 2
+    state: data/states/state2.csv
+  - week: 3
+    state: data/states/state3.csv
+  - week: 4
+    state: data/states/state4.csv
+  - week: 5
+    state: data/states/state5.csv
+  - week: 6
+    state: data/states/state6.csv
+
+strategy:
+  costs:
+    holding: 0.2
+    shortage: 1.0
+  forecast:
+    sip_grain: 500
+    gaussian_weight_band: [0.73, 0.93]
+    gaussian_weight_sigma: 0.05
+    gaussian_weight_center: 0.8333
+    fold_offset: 0   # fold_{week-1}
+  allocation:
+    service_bias: 0.0
+    default_service_level: 0.8333
+    missing_forecast_policy: zero
+
+logging:
+  level: INFO
+  tag_namespace: L3_baseline
+
