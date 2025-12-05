@@ -1,0 +1,48 @@
+run_id: value_weighted_high_service_w1_w6
+description: >
+  Counterfactual backtest with uniform +0.05 service bias to reduce shortage cost.
+created_at: "2025-11-25T00:00:00Z"
+weeks: [1, 2, 3, 4, 5, 6]
+
+paths:
+  initial_state: "data/raw/Week 0 - 2024-04-08 - Initial State.csv"
+  state_dir: data/states
+  checkpoints_dir: models/checkpoints
+  selector_map: models/results/selector_map_seq12_v1.parquet
+  selector_overrides: reports/selector_overrides_w6.csv
+  guardrail_overrides: reports/guardrail_overrides_w6.csv
+  output_root: reports/backtests
+
+week_data:
+  - week: 1
+    state: data/states/state1.csv
+  - week: 2
+    state: data/states/state2.csv
+  - week: 3
+    state: data/states/state3.csv
+  - week: 4
+    state: data/states/state4.csv
+  - week: 5
+    state: data/states/state5.csv
+  - week: 6
+    state: data/states/state6.csv
+
+strategy:
+  costs:
+    holding: 0.2
+    shortage: 1.0
+  forecast:
+    sip_grain: 500
+    gaussian_weight_band: [0.73, 0.93]
+    selector_override_enabled: true
+    guardrails_enabled: true
+  allocation:
+    service_bias: 0.05          # raise service everywhere
+    default_service_level: 0.8333
+    missing_forecast_policy: zero
+
+logging:
+  level: INFO
+  tag_namespace: diagnostics_w6_highsvc
+
+

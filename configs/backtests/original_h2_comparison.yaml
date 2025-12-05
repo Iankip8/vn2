@@ -1,0 +1,48 @@
+# Compare original h2 checkpoints through the L3 simulation
+# This helps us understand if the issue is h3 forecasts or L3 logic
+
+run_id: original_h2_comparison
+description: >
+  Run with original h2 checkpoints to compare forecast quality.
+  Uses L3 simulation but h2 forecasts (h3 will fallback to h2).
+created_at: "2025-12-04T00:00:00Z"
+weeks: [1, 2, 3, 4, 5, 6]
+
+paths:
+  initial_state: "data/raw/Week 0 - 2024-04-08 - Initial State.csv"
+  state_dir: data/states
+  # Use original h2 checkpoints
+  checkpoints_dir: models/checkpoints
+  selector_map: models/results/selector_map_seq12_v1.parquet
+  output_root: reports/backtests
+
+week_data:
+  - week: 1
+    state: data/states/state1.csv
+  - week: 2
+    state: data/states/state2.csv
+  - week: 3
+    state: data/states/state3.csv
+  - week: 4
+    state: data/states/state4.csv
+  - week: 5
+    state: data/states/state5.csv
+  - week: 6
+    state: data/states/state6.csv
+
+strategy:
+  costs:
+    holding: 0.2
+    shortage: 1.0
+  forecast:
+    sip_grain: 500
+    fold_offset: 0
+  allocation:
+    service_bias: 0.0
+    default_service_level: 0.8333
+    missing_forecast_policy: zero
+
+logging:
+  level: INFO
+  tag_namespace: h2_comparison
+
