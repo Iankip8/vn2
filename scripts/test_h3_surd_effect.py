@@ -38,6 +38,10 @@ QUANTILE_LEVELS = np.array([0.01, 0.05, 0.10, 0.20, 0.30, 0.40,
                             0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.99])
 CRITICAL_FRACTILE = 0.8333
 
+# Use corrected transforms by default
+DEFAULT_SURD_TRANSFORMS_PATH = Path('data/processed/surd_transforms_corrected.parquet')
+FALLBACK_SURD_TRANSFORMS_PATH = Path('data/processed/surd_transforms.parquet')
+
 
 def load_demand(path: Path) -> pd.DataFrame:
     """Load demand data."""
@@ -186,7 +190,24 @@ def main():
     parser.add_argument("--identity-model", default=None,
                         help="Identity-space model (auto-detect if not specified)")
     parser.add_argument("--max-skus", type=int, default=300)
+    parser.add_argument("--use-corrected-transforms", action='store_true', default=True,
+                        help="Use corrected SURD transforms (default: True)")
+    parser.add_argument("--use-original-transforms", action='store_true',
+                        help="Use original SURD transforms instead of corrected")
     args = parser.parse_args()
+    
+    # Determine which transforms file to use
+    if args.use_original_transforms:
+        surd_transforms_path = FALLBACK_SURD_TRANSFORMS_PATH
+        print("⚠️  Using ORIGINAL transforms (may have CV calculation bugs)")
+    else:
+        surd_transforms_path = DEFAULT_SURD_TRANSFORMS_PATH
+        if not surd_transforms_path.exists():
+            print(f"⚠️  Corrected transforms not found at {surd_transforms_path}")
+            print(f"   Falling back to {FALLBACK_SURD_TRANSFORMS_PATH}")
+            surd_transforms_path = FALLBACK_SURD_TRANSFORMS_PATH
+        else:
+            print(f"✓ Using CORRECTED transforms from {surd_transforms_path}")
     
     args.output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -314,4 +335,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
