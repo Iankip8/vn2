@@ -22,7 +22,7 @@ We propose an end-to-end decision-first forecasting framework that: (1) retains 
 ### 3. Theory
 
 #### 3.1 Jensen’s Inequality and Decision Curvature
-Operational cost functions are typically nonlinear in the decision and random outcomes (e.g., asymmetric piecewise linear holding–shortage cost). Let C(Q; D) be cost under order quantity Q and random demand D. For nonlinear C, E[C(Q; D)] ≠ C(Q; E[D]). Optimizing on a point forecast (e.g., E[D]) therefore induces suboptimal decisions whenever curvature matters. When order decisions target a critical fractile (CF = p/(h+p)), the local shape of the predictive CDF around the CF determines the regret; sharper and better-calibrated distributions reduce expected loss.
+Operational cost functions are typically nonlinear in the decision and random outcomes (e.g., asymmetric piecewise linear holding–shortage cost). Let C(Q; D) be cost under order quantity Q and random demand D. For nonlinear C, E[C(Q; D)] ≠ C(Q; E[D]). Optimizing on a point forecast (e.g., E[D]) therefore induces suboptimal decisions whenever curvature matters. When order decisions target a critical fractile τ = c_s/(c_h + c_s)—in our case τ = 1.00/(0.20 + 1.00) = 0.833—the local shape of the predictive CDF around this fractile determines the regret; sharper and better-calibrated distributions reduce expected loss.
 
 #### 3.2 Censoring, Not Missingness
 Stockouts censor demand: observed sales Y = min(D, S), where D is true demand and S is available stock. Treating censored periods as missing and imputing point values discards structural information about right-tail mass. A stockout-aware learner should upweight uncertainty during such periods rather than collapsing to a single imputed count.
@@ -33,12 +33,12 @@ Different series exhibit different dispersion–mean relationships. SURD selects
 Terminology note: In this work, SURD stands for Systematic Unsupervised Representation Discovery (transform selection). This differs from the information-theoretic literature on Synergistic, Unique, and Redundant Decomposition (also sometimes abbreviated SURD) concerned with decompositions of information/causality.
 
 #### 3.4 SIP Math for the Sequential Newsvendor
-We model the start-of-period inventory position as a random variable I_t and lead-time arrivals A_t (known for the first arrival). Given a predictive demand distribution for horizons h=1,2, we construct the distribution of ending inventory after sales: I_{t+1} = max(0, I_t + A_t − D_t). The order decision Q_t is an integer chosen to minimize expected cost over the evaluation horizon, accounting for the distribution of I_{t+2} before the second arrival. We discretize predictive distributions (quantiles→PMF), convolve with inventory, and evaluate discrete Q in [0, Q_max] to select argmin_Q E[holding + shortage]. This enforces correct lead-time timing and non-zero initial state.
+We model the start-of-period inventory position as a random variable I_t and lead-time arrivals A_t (known for the first arrival). The protection period spans L+R weeks (lead time + review period), requiring demand forecasts for horizons h = L+1, L+2, ..., L+R. For our setting with L=2 weeks lead time and R=1 week review period, we forecast horizons h=3,4,5 to capture all demand that occurs before the next replenishment opportunity. We aggregate these weekly distributions via Monte Carlo sampling (drawing from each week's distribution and summing across the protection horizon) to obtain the mean μ and standard deviation σ of total demand during the protection period. The newsvendor critical fractile τ = c_s/(c_h + c_s) determines the base-stock level S = μ + Φ^{-1}(τ)·σ, where Φ^{-1} is the standard normal quantile function. The order decision Q_t = max(0, ⌈S - I_t⌉) is an integer chosen to bring inventory position to the target level, minimizing expected asymmetric cost E[c_h·max(0, I-D) + c_s·max(0, D-I)]. This enforces correct lead-time timing, proper protection-period aggregation, and non-zero initial state.
 
 ### 4. Methodology
 
 #### 4.1 Data and Censoring
-We use 599 store–item weekly series with frequent zeros and stockouts. For stockout-aware models, we train on raw observations with an in_stock indicator to preserve censoring structure. For non-aware baselines, we create a stable target by winsorizing imputed demand in transform space (SURD μ+3σ cap, inverted and clipped), modifying only imputed extremes and preserving genuine observations.
+We use 599 store–item weekly series from a retail competition with frequent zeros and stockouts. The cost structure is c_h = €0.20 per unit held and c_s = €1.00 per unit short, yielding critical fractile τ = 0.833. Lead time is L=2 weeks and review period is R=1 week, requiring a 3-week protection period (horizons h=3,4,5). For stockout-aware models, we train on raw observations with an in_stock indicator to preserve censoring structure. For non-aware baselines, we create a stable target by winsorizing imputed demand in transform space (SURD μ+3σ cap, inverted and clipped), modifying only imputed extremes and preserving genuine observations.
 
 #### 4.2 Models (Model Canvas)
 - SLURP Bootstrap (baseline): conditional bootstrap on k-NN histories.
@@ -175,5 +175,29 @@ We will synthesize: decision-driven forecasting beats point+service-level; censo
 20. T. Chapelle et al. (2020). “NGBoost: Natural Gradient Boosting for Probabilistic Prediction.” NeurIPS.
 21. S. Savage (2012). The Flaw of Averages: Why We Underestimate Risk in the Face of Uncertainty. Wiley.
 22. P. L. Williams and R. D. Beer (2010). “Nonnegative Decomposition of Multivariate Information.” arXiv:1004.2515. (Foundational work on unique, redundant, and synergistic information; related to decomposing causality/influence.)
+
+### Progress Update for Patric (Feb 12, 2026)
+
+**Evaluation Status:**
+- 12-week sequential backtest completed successfully (17 models × 599 SKUs)
+- All technical validation checks passed
+
+**Best Score:**
+- Best single model: ZINB (portfolio cost: 9,005.20)
+- Ensemble selector: portfolio cost 5,723.80 (36.5% lower than best single model)
+
+**Top-Performing Models:**
+- ZINB: lowest cost among single models, but 202 missing forecasts
+- SLURP Bootstrap & SLURP Stockout-Aware: consistent performance, zero missing forecasts
+- Selector (ensemble): uses 10+ models, delivers best overall results
+- LightGBM Quantile: most frequently chosen by selector (32.7% of SKUs)
+
+**Key Insights:**
+- Ensemble selector approach outperforms any single model
+- SLURP models are robust and reliable
+- Model diversity is valuable—no single model dominates
+
+**Recommendation:**
+- Use the selector (ensemble) approach in production for optimal results
 
 

@@ -23,6 +23,7 @@ models/checkpoints/
 models/trained/
 models/results/
 logs/
+VN2-Top-Submissions/
 
 # data files
 *.csv

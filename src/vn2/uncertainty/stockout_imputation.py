@@ -430,8 +430,22 @@ def impute_stockout_sip(
             fallback_q = np.quantile(sku_hist['sales'].values, q_levels)
             return pd.Series(fallback_q, index=q_levels)
         else:
-            # Last resort: uniform around stock level
-            return pd.Series(np.linspace(0, stock_level * 2, len(q_levels)), index=q_levels)
+            # Last resort: use product-level or global average (not stock_level which may be 0)
+            # Get same product from other stores
+            product_hist = df[(df['Product'] == product) & (df['week'] < week) & (df['in_stock'] == True)]
+            if len(product_hist) > 0:
+                product_mean = product_hist['sales'].mean()
+                product_std = product_hist['sales'].std()
+            else:
+                # Global fallback
+                global_hist = df[(df['week'] < week) & (df['in_stock'] == True)]
+                product_mean = global_hist['sales'].mean() if len(global_hist) > 0 else 1.0
+                product_std = global_hist['sales'].std() if len(global_hist) > 0 else 0.5
+            
+            # Create reasonable distribution around mean (not zeros!)
+            fallback_mean = max(stock_level * 1.5, product_mean, 0.5)  # At least 0.5
+            fallback_q = np.quantile(np.random.normal(fallback_mean, product_std, 1000), q_levels)
+            return pd.Series(np.maximum(0, fallback_q), index=q_levels)
     
     # Get observed quantiles below stock (in transform space)
     store, product = sku_id

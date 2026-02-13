@@ -188,11 +188,15 @@ class ForecastPipeline:
                     'elapsed': time.time() - start_time
                 }
             
-            # Predict
-            quantiles_df = model.predict_quantiles(steps=2, X_future=X_test)
+            # Predict - use configured horizon (not hardcoded 2!)
+            quantiles_df = model.predict_quantiles(steps=self.config['horizon'], X_future=X_test)
             
-            # Evaluate
-            y_test_vals = y_test.values if len(y_test) == 2 else np.pad(y_test.values, (0, 2 - len(y_test)), constant_values=0)
+            # Evaluate - pad y_test to match horizon if needed
+            horizon = self.config['horizon']
+            if len(y_test) < horizon:
+                y_test_vals = np.pad(y_test.values, (0, horizon - len(y_test)), constant_values=0)
+            else:
+                y_test_vals = y_test.values[:horizon]
             metrics = evaluate_forecast(y_test_vals, quantiles_df, include_cost=False)
             
             # Save checkpoint

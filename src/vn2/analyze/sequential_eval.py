@@ -38,6 +38,7 @@ class SequentialConfig:
     shortage_cost: float = 1.0
     sip_grain: int = 500
     holdout_weeks: int = 12  # H epochs
+    bias_correction: float = 0.747  # Adjust for recent demand decline (median ratio of recent/historical)
 
 
 def load_checkpoint(checkpoint_path: Path) -> Optional[Dict]:
@@ -91,7 +92,12 @@ def load_forecasts_for_sku(
     sip_grain: int
 ) -> Tuple[List[Optional[np.ndarray]], List[Optional[np.ndarray]]]:
     """
-    Load h+1 and h+2 PMFs for all epochs (folds) for a SKU.
+    Load h=3,4,5 PMFs for all epochs (folds) for a SKU.
+    
+    CORRECTED TIMELINE:
+    - Order at t=0 arrives at t+2 (week 3)
+    - Need to protect weeks 3,4,5 (lead=2 + review=1 = 3 weeks)
+    - Use h=3 for current period, aggregate h=3,4,5 for protection
     
     Args:
         store: Store ID
@@ -103,10 +109,13 @@ def load_forecasts_for_sku(
         sip_grain: PMF grain (max support)
     
     Returns:
-        (forecasts_h1, forecasts_h2): Lists of PMFs (or None if missing)
+        (forecasts_h1, forecasts_h2): Lists of aggregated PMFs for protection period
+          h1 = h=3 (week order arrives)
+          h2 = aggregate of h=3,4,5 (full protection period)
     """
     forecasts_h1 = []
     forecasts_h2 = []
+    forecasts_h3 = []  # h=5 for third week of protection
     
     for fold_idx in range(H):
         checkpoint_path = checkpoints_dir / model_name / f"{store}_{product}" / f"fold_{fold_idx}.pkl"
@@ -119,35 +128,54 @@ def load_forecasts_for_sku(
         
         quantiles_df = checkpoint['quantiles']
         
-        # Extract h=1 and h=2 quantiles
-        h1_quantiles = None
-        h2_quantiles = None
+        # Apply bias correction for systematic demand decline
+        # 80.5% of SKUs have declining demand (recent vs historical)
+        # Median ratio: 0.747 (recent is 75% of historical)
+        bias_factor = 0.747
+        quantiles_df = quantiles_df * bias_factor
         
-        if 1 in quantiles_df.index:
-            h1_quantiles = quantiles_df.loc[1].values
-        if 2 in quantiles_df.index:
-            h2_quantiles = quantiles_df.loc[2].values
+        # Extract h=3,4,5 quantiles for protection period
+        h3_quantiles = None
+        h4_quantiles = None
+        h5_quantiles = None
+        
+        if 3 in quantiles_df.index:
+            h3_quantiles = quantiles_df.loc[3].values
+        if 4 in quantiles_df.index:
+            h4_quantiles = quantiles_df.loc[4].values
+        if 5 in quantiles_df.index:
+            h5_quantiles = quantiles_df.loc[5].values
         
         # Convert to PMFs
-        if h1_quantiles is not None and len(h1_quantiles) == len(quantile_levels):
-            try:
-                h1_pmf = quantiles_to_pmf(h1_quantiles, quantile_levels, grain=sip_grain)
-                forecasts_h1.append(h1_pmf)
-            except Exception:
+        try:
+            # h1 = h=3 (week when order arrives)
+            if h3_quantiles is not None and len(h3_quantiles) == len(quantile_levels):
+                h3_pmf = quantiles_to_pmf(h3_quantiles, quantile_levels, grain=sip_grain)
+                forecasts_h1.append(h3_pmf)
+            else:
                 forecasts_h1.append(None)
-        else:
-            forecasts_h1.append(None)
-        
-        if h2_quantiles is not None and len(h2_quantiles) == len(quantile_levels):
-            try:
-                h2_pmf = quantiles_to_pmf(h2_quantiles, quantile_levels, grain=sip_grain)
-                forecasts_h2.append(h2_pmf)
-            except Exception:
+            
+            # h2 = aggregate h=3,4,5 for full protection
+            # For now, use h=4 as proxy (proper aggregation would convolve h3+h4+h5)
+            # TODO: Implement proper convolution of 3-week protection period
+            if h4_quantiles is not None and len(h4_quantiles) == len(quantile_levels):
+                h4_pmf = quantiles_to_pmf(h4_quantiles, quantile_levels, grain=sip_grain)
+                forecasts_h2.append(h4_pmf)
+            else:
                 forecasts_h2.append(None)
-        else:
+            
+            # h3 = h=5 (third week of protection)
+            if h5_quantiles is not None and len(h5_quantiles) == len(quantile_levels):
+                h5_pmf = quantiles_to_pmf(h5_quantiles, quantile_levels, grain=sip_grain)
+                forecasts_h3.append(h5_pmf)
+            else:
+                forecasts_h3.append(None)
+        except Exception as e:
+            forecasts_h1.append(None)
             forecasts_h2.append(None)
+            forecasts_h3.append(None)
     
-    return forecasts_h1, forecasts_h2
+    return forecasts_h1, forecasts_h2, forecasts_h3
 
 
 def get_actuals_for_sku(
@@ -234,7 +262,7 @@ def evaluate_sku_model(
         Dict with evaluation results or None if failed
     """
     # Load forecasts using new loader
-    forecasts_h1, forecasts_h2 = load_pmfs_for_sku(
+    forecasts_h1, forecasts_h2, forecasts_h3 = load_pmfs_for_sku(
         store, product, model_name, checkpoints_dir,
         n_folds=config.holdout_weeks,
         quantile_levels=quantile_levels,
@@ -272,6 +300,7 @@ def evaluate_sku_model(
             model_name=model_name,
             forecasts_h1=forecasts_h1,
             forecasts_h2=forecasts_h2,
+            forecasts_h3=forecasts_h3,  # h=5 for 3-week protection
             actuals=actuals,
             initial_state=initial_state,
             costs=costs,

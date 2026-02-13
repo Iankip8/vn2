@@ -1,11 +1,11 @@
 paths:
-  processed: /Users/jpmcdonald/Code/vn2/data/processed
-  models: /Users/jpmcdonald/Code/vn2/models/trained
-  checkpoints: /Users/jpmcdonald/Code/vn2/models/checkpoints
-  results: /Users/jpmcdonald/Code/vn2/models/results
+  processed: /home/ian/vn2/data/processed
+  models: /home/ian/vn2/models/trained
+  checkpoints: /home/ian/vn2/models/checkpoints
+  results: /home/ian/vn2/models/results
 
 quantiles: [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
-horizon: 2  # weeks (h=1, h=2)
+horizon: 12  # weeks (h=1 through h=12) - MUST match evaluation horizon for policy
 holdout_weeks: 12
 rolling_origins: 12
 
@@ -45,7 +45,7 @@ models:
     type: negbin
   
   lightgbm_quantile:
-    enabled: true
+    enabled: true  # KEY MODEL for paper
     max_depth: 6
     num_leaves: 31
     learning_rate: 0.05
@@ -53,32 +53,32 @@ models:
     min_data_in_leaf: 20
   
   ets:
-    enabled: false
+    enabled: true  # Statistical baseline
     error: add
     trend: null
     seasonal: null
     seasonal_periods: 52
   
   slurp_bootstrap:
-    enabled: true
+    enabled: true  # SLURP baseline
     n_neighbors: 50
     n_bootstrap: 1000
   
   slurp_surd:
-    enabled: true
+    enabled: true  # SURD ablation
     n_neighbors: 50
     n_bootstrap: 1000
     stockout_aware: false
     use_surd: true
   
   slurp_stockout_aware:
-    enabled: true
+    enabled: true  # Stockout-aware ablation
     n_neighbors: 50
     n_bootstrap: 1000
     stockout_aware: true
   
   slurp_surd_stockout_aware:
-    enabled: true
+    enabled: true  # Full SLURP implementation
     n_neighbors: 50
     n_bootstrap: 1000
     stockout_aware: true
@@ -90,7 +90,7 @@ models:
     solver: highs
   
   ngboost:
-    enabled: false
+    enabled: true  # Distributional baseline
     dist: LogNormal
     n_estimators: 100
     learning_rate: 0.01
@@ -102,7 +102,7 @@ models:
   
   # New challenger models for Jensen study
   lightgbm_point:
-    enabled: false
+    enabled: true  # Point forecast baseline for Jensen gap
     max_depth: 6
     num_leaves: 31
     learning_rate: 0.05

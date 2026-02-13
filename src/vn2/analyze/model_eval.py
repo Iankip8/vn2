@@ -446,22 +446,36 @@ def compute_cost_metric(
     quantile_levels = quantiles_df.columns.values
     horizon = len(y_true)
     
-    # Estimate mu and sigma from h=1 forecast for base-stock
-    if 1 in quantiles_df.index:
-        q_vals_h1 = quantiles_df.loc[1].values
-        u_sample = rng.uniform(0, 1, 1000)
-        samples_h1 = np.interp(u_sample, quantile_levels, q_vals_h1)
-        mu = np.mean(samples_h1)
-        sigma = np.std(samples_h1)
-    else:
-        mu = np.mean(y_true)
-        sigma = np.std(y_true)
+    # CORRECTED POLICY (Patrick McDonald recommendations):
+    # 1. Protection period = lead + review (3 weeks, not 1)
+    # 2. Critical fractile = 0.833 explicit
+    # 3. Aggregate weekly distributions over protection horizon
     
-    # Base-stock order calculation
+    protection_weeks = lt.lead_weeks + lt.review_weeks
     critical_fractile = costs.shortage / (costs.holding + costs.shortage)
-    L = lt.lead_weeks + lt.review_weeks
+    
+    # Aggregate weekly distributions via Monte Carlo sampling
+    # TIMELINE FIX: Aggregate h = [lead_weeks+1, ..., lead_weeks+protection_weeks]
+    # Order placed NOW (t=0) arrives at week lead_weeks+1, so forecast when AVAILABLE
+    protection_samples = []
+    for week in range(1, protection_weeks + 1):
+        h = lt.lead_weeks + week  # Map to forecast horizon
+        if h in quantiles_df.index:
+            q_vals = quantiles_df.loc[h].values
+            u = rng.uniform(0, 1, 10000)
+            week_samples = np.interp(u, quantile_levels, q_vals)
+            protection_samples.append(week_samples)
+        else:
+            protection_samples.append(np.zeros(10000))
+    
+    # Sum across weeks to get aggregated demand distribution
+    total_demand_samples = np.sum(protection_samples, axis=0)
+    mu = np.mean(total_demand_samples)
+    sigma = np.std(total_demand_samples)
+    
+    # Base-stock level using aggregated distribution
     z = stats.norm.ppf(critical_fractile)
-    S = mu * L + z * sigma * np.sqrt(L)
+    S = mu + z * sigma
     
     # Inventory position at fold origin
     position = initial_state["on_hand"].iloc[0] + initial_state["intransit_1"].iloc[0] + initial_state["intransit_2"].iloc[0]

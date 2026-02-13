@@ -1,11 +1,11 @@
 paths:
-  root: /Users/jpmcdonald/Code/vn2
-  raw: /Users/jpmcdonald/Code/vn2/data/raw
-  interim: /Users/jpmcdonald/Code/vn2/data/interim
-  processed: /Users/jpmcdonald/Code/vn2/data/processed
-  submissions: /Users/jpmcdonald/Code/vn2/data/submissions
-  scratch: /Users/jpmcdonald/Code/vn2/scratch
-  reports: /Users/jpmcdonald/Code/vn2/reports
+  root: /home/ian/vn2
+  raw: /home/ian/vn2/data/raw
+  interim: /home/ian/vn2/data/interim
+  processed: /home/ian/vn2/data/processed
+  submissions: /home/ian/vn2/data/submissions
+  scratch: /home/ian/vn2/scratch
+  reports: /home/ian/vn2/reports
 
 simulation:
   lead_weeks: 2

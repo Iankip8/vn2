@@ -1,31 +1,22 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VENV="$ROOT/V2env"
 
-if [[ ! -d "$VENV" ]]; then
-  echo "Creating venv at $VENV"
-  python3 -m venv "$VENV"
+# Check if uv is installed
+if ! command -v uv &> /dev/null; then
+  echo "Error: uv is not installed. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+  exit 1
 fi
 
-source "$VENV/bin/activate"
-python -m pip install --upgrade pip wheel --quiet
+# Sync environment with uv (creates venv automatically if needed)
+cd "$ROOT"
+uv sync --quiet
 
-REQ="$ROOT/requirements.txt"
-STAMP="$VENV/.reqs.sha256"
-
-if [[ -f "$REQ" ]]; then
-  CURR_SHA="$(shasum -a 256 "$REQ" | awk '{print $1}')"
-  PREV_SHA="$( [[ -f "$STAMP" ]] && cat "$STAMP" || echo "" )"
-  if [[ "$CURR_SHA" != "$PREV_SHA" ]]; then
-    echo "Installing/upgrading requirements..."
-    pip install -r "$REQ" --quiet
-    echo "$CURR_SHA" > "$STAMP"
-  fi
-fi
+# Activate the uv-managed virtual environment
+source "$ROOT/.venv/bin/activate"
 
 export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
-echo "✓ Activated $(python -V) in $VENV"
+echo "✓ Activated $(python -V) with uv"
 echo "  PYTHONPATH=$PYTHONPATH"
 

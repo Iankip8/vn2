@@ -140,7 +140,11 @@ def crps_score(y_true: float, quantiles: np.ndarray, quantile_levels: np.ndarray
     # CRPS = integral |F(x) - I(y <= x)|² dx
     # Approximate via trapezoid over quantiles
     integrand = (q_levels - indicators) ** 2
-    crps = np.trapz(integrand, q_values)
+    # Use trapezoid for NumPy 2.0+ compatibility (trapz deprecated)
+    try:
+        crps = np.trapezoid(integrand, q_values)
+    except AttributeError:
+        crps = np.trapz(integrand, q_values)  # Fallback for older NumPy
     
     return crps
 

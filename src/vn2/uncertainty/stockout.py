@@ -39,7 +39,11 @@ def trapz_integral_over_quantiles(
             p2 = np.insert(p2, 0, p0)
             v2 = np.insert(v2, 0, v0)
     
-    return float(np.trapz(v2, p2))
+    # Use trapezoid for NumPy 2.0+ compatibility (trapz deprecated)
+    try:
+        return float(np.trapezoid(v2, p2))
+    except AttributeError:
+        return float(np.trapz(v2, p2))  # Fallback for older NumPy
 
 
 def expected_tail(

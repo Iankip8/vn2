@@ -19,10 +19,11 @@ def load_forecasts_for_sku(
     checkpoints_dir: Path,
     n_folds: int = 12,
     quantile_levels: Optional[np.ndarray] = None,
-    pmf_grain: int = 500
-) -> Tuple[List[Optional[np.ndarray]], List[Optional[np.ndarray]]]:
+    pmf_grain: int = 500,
+    bias_correction: float = 1.0  # NO bias correction by default (was 0.747)
+) -> Tuple[List[Optional[np.ndarray]], List[Optional[np.ndarray]], List[Optional[np.ndarray]]]:
     """
-    Load h1 and h2 PMFs for a SKU from forecast checkpoints.
+    Load h3, h4, h5 PMFs for a SKU from forecast checkpoints.
     
     Args:
         store: Store ID
@@ -32,9 +33,10 @@ def load_forecasts_for_sku(
         n_folds: Number of folds (weeks) to load
         quantile_levels: Quantile levels (default: [0.01, 0.05, ..., 0.99])
         pmf_grain: PMF support size
+        bias_correction: Multiplicative bias correction for systematic demand decline
     
     Returns:
-        (h1_pmfs, h2_pmfs): Lists of PMFs (or None if missing)
+        (h3_pmfs, h4_pmfs, h5_pmfs): Lists of PMFs for horizons 3, 4, 5 (or None if missing)
     """
     if quantile_levels is None:
         quantile_levels = np.array([0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99])
@@ -44,17 +46,19 @@ def load_forecasts_for_sku(
     
     if not sku_dir.exists():
         # SKU not found: return all None
-        return [None] * n_folds, [None] * n_folds
+        return [None] * n_folds, [None] * n_folds, [None] * n_folds
     
-    h1_pmfs = []
-    h2_pmfs = []
+    h3_pmfs = []
+    h4_pmfs = []
+    h5_pmfs = []
     
     for fold_idx in range(n_folds):
         fold_file = sku_dir / f"fold_{fold_idx}.pkl"
         
         if not fold_file.exists():
-            h1_pmfs.append(None)
-            h2_pmfs.append(None)
+            h3_pmfs.append(None)
+            h4_pmfs.append(None)
+            h5_pmfs.append(None)
             continue
         
         try:
@@ -64,27 +68,47 @@ def load_forecasts_for_sku(
             # Extract quantiles DataFrame
             quantiles_df = checkpoint.get('quantiles')
             
-            if quantiles_df is None or len(quantiles_df) < 2:
-                h1_pmfs.append(None)
-                h2_pmfs.append(None)
+            if quantiles_df is None or len(quantiles_df) < 3:
+                h3_pmfs.append(None)
+                h4_pmfs.append(None)
+                h5_pmfs.append(None)
                 continue
             
-            # Convert step 1 (h1) and step 2 (h2) to PMFs
-            q1 = quantiles_df.loc[1].values if 1 in quantiles_df.index else quantiles_df.iloc[0].values
-            q2 = quantiles_df.loc[2].values if 2 in quantiles_df.index else quantiles_df.iloc[1].values
+            # Apply bias correction for systematic demand decline
+            # 80.5% of SKUs have declining demand (recent vs historical)
+            # Median ratio: 0.747
+            quantiles_df = quantiles_df * bias_correction
             
-            pmf1 = quantiles_to_pmf(q1, quantile_levels, pmf_grain)
-            pmf2 = quantiles_to_pmf(q2, quantile_levels, pmf_grain)
+            # Convert h=3, h=4, h=5 to PMFs (3-week protection period)
+            q3 = quantiles_df.loc[3].values if 3 in quantiles_df.index else None
+            q4 = quantiles_df.loc[4].values if 4 in quantiles_df.index else None
+            q5 = quantiles_df.loc[5].values if 5 in quantiles_df.index else None
             
-            h1_pmfs.append(pmf1)
-            h2_pmfs.append(pmf2)
+            if q3 is not None and len(q3) == len(quantile_levels):
+                pmf3 = quantiles_to_pmf(q3, quantile_levels, pmf_grain)
+                h3_pmfs.append(pmf3)
+            else:
+                h3_pmfs.append(None)
+            
+            if q4 is not None and len(q4) == len(quantile_levels):
+                pmf4 = quantiles_to_pmf(q4, quantile_levels, pmf_grain)
+                h4_pmfs.append(pmf4)
+            else:
+                h4_pmfs.append(None)
+            
+            if q5 is not None and len(q5) == len(quantile_levels):
+                pmf5 = quantiles_to_pmf(q5, quantile_levels, pmf_grain)
+                h5_pmfs.append(pmf5)
+            else:
+                h5_pmfs.append(None)
             
         except Exception as e:
             print(f"Warning: Failed to load {fold_file}: {e}")
-            h1_pmfs.append(None)
-            h2_pmfs.append(None)
+            h3_pmfs.append(None)
+            h4_pmfs.append(None)
+            h5_pmfs.append(None)
     
-    return h1_pmfs, h2_pmfs
+    return h3_pmfs, h4_pmfs, h5_pmfs
 
 
 def get_available_models(checkpoints_dir: Path) -> List[str]:
